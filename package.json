@@ -32,7 +32,8 @@
     "test": "tsx --test tests/*.test.ts",
     "prepack": "npm run build",
     "lint": "eslint src tests --max-warnings=0",
-    "format:check": "prettier --check src tests package.json tsconfig.json tsconfig.build.json README.md"
+    "format:check": "prettier --check src tests package.json tsconfig.json tsconfig.build.json README.md",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0"
