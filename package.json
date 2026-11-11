@@ -1,0 +1,53 @@
+{
+  "name": "@blockchainian/claude-client",
+  "version": "0.1.0",
+  "description": "A small concurrency-limited Claude Messages client with structured output and prompt caching.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blockchainian/claude-client.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json",
+    "test": "tsx --test tests/*.test.ts",
+    "prepack": "npm run build",
+    "lint": "eslint src tests --max-warnings=0",
+    "format:check": "prettier --check src tests package.json tsconfig.json tsconfig.build.json README.md"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0"
+  },
+  "devDependencies": {
+    "@eslint-community/eslint-plugin-eslint-comments": "4.8.1",
+    "@stylistic/eslint-plugin": "5.10.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.39.0",
+    "eslint-plugin-import": "2.32.0",
+    "eslint-plugin-jsdoc": "65.4.5",
+    "eslint-plugin-unicorn": "62.0.0",
+    "prettier": "3.9.10",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "8.72.2"
+  }
+}
