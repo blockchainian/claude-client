@@ -1,7 +1,21 @@
-import Anthropic from '@anthropic-ai/sdk';
+import type { Authentication } from './auth.js';
+import { createAuthentication } from './auth.js';
+import type { ClientBatches } from './batches.js';
+import { createBatches } from './batches.js';
+
+export type {
+  BatchRequest,
+  BatchCreateParams,
+  BatchResultsOptions,
+  BatchResult,
+  ClientBatches,
+} from './batches.js';
+
+export type { Authentication } from './auth.js';
 import type {
   ContentBlockParam,
   Message,
+  MessageCreateParamsNonStreaming,
   Model,
   OutputConfig,
 } from '@anthropic-ai/sdk/resources/messages';
@@ -22,6 +36,8 @@ export interface RespondRequest {
   schema?: JsonSchema;
   /** The output token limit; defaults to 16000. */
   maxTokens?: number;
+  /** Prompt-cache lifetime; defaults to five minutes. */
+  cacheTtl?: '5m' | '1h';
 }
 
 /** A model call whose output follows a JSON schema. */
@@ -51,12 +67,16 @@ export interface ClientOptions {
   concurrency?: number;
   /** Defaults to `ANTHROPIC_API_KEY`. */
   apiKey?: string;
+  /** Selects the existing Claude Code account login or API key billing. */
+  auth?: Authentication;
   /** Retries of rate-limited and failed requests; defaults to 4. */
   maxRetries?: number;
 }
 
 /** A Claude Messages client. */
 export interface ClaudeClient {
+  /** Native batch operations, available with API key authentication. */
+  batches: ClientBatches;
   /** Queues a model call and resolves with its parsed JSON output. */
   respond(request: StructuredRequest): Promise<RespondResult<unknown>>;
   /** Queues a model call and resolves with its text output. */
@@ -136,25 +156,29 @@ function usageOf({ usage }: Message): Usage {
   };
 }
 
-async function send(
-  anthropic: Anthropic,
+function messageParams(
+  authentication: ReturnType<typeof createAuthentication>,
   request: RespondRequest,
-): Promise<RespondResult<unknown>> {
+): MessageCreateParamsNonStreaming {
   const { model, effort, instructions, input, schema } = request;
   /* eslint-disable @typescript-eslint/naming-convention -- The Messages API uses snake_case fields. */
-  const message = await anthropic.messages.create({
+  return {
     model,
     max_tokens: request.maxTokens ?? 16_000,
     output_config: {
       effort,
       format: schema && { type: 'json_schema', schema },
     },
-    system: [
-      { type: 'text', text: instructions, cache_control: { type: 'ephemeral' } },
-    ],
+    system: authentication.system(instructions, request.cacheTtl),
     messages: [{ role: 'user', content: input }],
-  });
+  };
   /* eslint-enable @typescript-eslint/naming-convention -- The snake_case Messages API fields end here. */
+}
+
+function parseMessage(
+  message: Message,
+  request: RespondRequest,
+): RespondResult<unknown> {
   if (message.stop_reason !== 'end_turn') {
     throw new Error(`Unexpected stop reason: ${message.stop_reason}.`);
   }
@@ -162,8 +186,43 @@ async function send(
     .filter((block) => block.type === 'text')
     .map((block) => block.text)
     .join('');
-  const output: unknown = schema ? JSON.parse(text) : text;
+  const output: unknown = request.schema ? JSON.parse(text) : text;
   return { output, usage: usageOf(message) };
+}
+
+async function send(
+  authentication: ReturnType<typeof createAuthentication>,
+  request: RespondRequest,
+) {
+  const message = await authentication
+    .client()
+    .messages.create(
+      messageParams(authentication, request),
+      authentication.requestOptions,
+    );
+  return parseMessage(message, request);
+}
+
+function authenticatedBatches(
+  authentication: ReturnType<typeof createAuthentication>,
+  assertOpen: () => void,
+) {
+  return createBatches({
+    client: () => authentication.client(),
+    assertAllowed() {
+      assertOpen();
+      assertBatchAuthentication(authentication.account);
+    },
+    params: (request) => messageParams(authentication, request),
+    parse: parseMessage,
+  });
+}
+
+function assertBatchAuthentication(account: boolean): void {
+  if (account)
+    throw new Error(
+      'Native batches require API key authentication; account authentication is not supported.',
+    );
 }
 
 /**
@@ -173,30 +232,42 @@ async function send(
  */
 export function createClaudeClient({
   concurrency = 20,
-  apiKey = process.env['ANTHROPIC_API_KEY'],
+  apiKey,
+  auth,
   maxRetries = 4,
 }: ClientOptions = {}): ClaudeClient {
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
     throw new Error('Invalid concurrency.');
   }
-  if (!apiKey) throw new Error('Missing apiKey or ANTHROPIC_API_KEY.');
-  const anthropic = new Anthropic({ apiKey, maxRetries });
+  const authentication = createAuthentication({ apiKey, auth, maxRetries });
   const scheduler = createScheduler(concurrency);
   let closed = false;
+
+  function assertOpen() {
+    if (closed) throw new Error('Claude client is closed.');
+  }
 
   function respond(request: StructuredRequest): Promise<RespondResult<unknown>>;
   function respond(request: RespondRequest): Promise<RespondResult<string>>;
   async function respond(request: RespondRequest) {
-    if (closed) throw new Error('Claude client is closed.');
+    assertOpen();
     const { model, effort, instructions, schema } = request;
-    const prefix = JSON.stringify([model, effort, instructions, schema]);
-    return scheduler.schedule(prefix, async () => send(anthropic, request));
+    const prefix = JSON.stringify([
+      model,
+      effort,
+      instructions,
+      schema,
+      request.cacheTtl,
+    ]);
+    return scheduler.schedule(prefix, async () => send(authentication, request));
   }
+
+  const batchOperations = authenticatedBatches(authentication, assertOpen);
 
   async function close(): Promise<void> {
     closed = true;
-    await scheduler.drain();
+    await Promise.all([scheduler.drain(), batchOperations.drain()]);
   }
 
-  return { respond, close };
+  return { respond, close, batches: batchOperations.batches };
 }

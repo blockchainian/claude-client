@@ -8,7 +8,10 @@ export default [
   {
     files: ['src/**/*.ts', 'tests/**/*.ts'],
     // no-unused-modules lists the files it checks by these extensions.
-    settings: { 'import/extensions': ['.ts'] },
+    settings: {
+      'import/extensions': ['.ts'],
+      'import/resolver': { typescript: { project: './tsconfig.json' } },
+    },
     rules: {
       // 3.4.1 Export visibility; the entry point's exports are the package API.
       'import/no-unused-modules': [
